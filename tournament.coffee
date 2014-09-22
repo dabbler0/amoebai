@@ -14,10 +14,10 @@ class Directive
   constructor: (@base, @direction) ->
 
 dirMap = {
-  N: x: 0, y: -1
-  S: x: 0, y: 1
-  E: x: 1, y: 0
-  W: x: -1, y: 0
+  N: {x: 0, y: -1}
+  S: {x: 0, y: 1}
+  E: {x: 1, y: 0}
+  W: {x: -1, y: 0}
 }
 
 class Player
@@ -25,14 +25,11 @@ class Player
     @process = child_process.exec @script
 
   feed: (board, cb) ->
-    console.log 'CALLED FEED AGAIN'
     @process.stdin.write board.serialize() + '\n\n\n\n'
-    console.log 'WROTE'
     await
       cont = defer response
       str = ''
       @process.stdout.once 'data', fn = (data) =>
-        console.log 'GOT DATA', data
         str += data.toString()
         if str[-5..-1] is 'DONE\n'
           cont str
@@ -41,12 +38,10 @@ class Player
     response = response.split('\n')[...-2]
     actions = []
     for line in response
-      console.log 'PARSING', line
       line = line.split ' '
       coord = x: Number(line[0]), y: Number(line[1])
       actions.push new board.Action @, coord, new Directive line[2], dirMap[line[3]]
 
-    console.log 'RETURNED', actions
     cb actions
 
 class Board
@@ -62,7 +57,7 @@ class Board
         @deleteFlag = false
 
       render: ->
-        color @player.color, '#'
+        color @player.color, @prime.toString()
 
     @Action = class Action
       constructor: (@player, @coord, @directive) ->
@@ -78,6 +73,7 @@ class Board
               newBoard[newpos.x][newpos.y].deleteFlag = amoeba.deleteFlag = true
             else
               newBoard[newpos.x][newpos.y] = amoeba
+            amoeba.pos = newpos
           when 'ATTACK'
             if board.board[newpos.x][newpos.y]?
               board.board[newpos.x][newpos.y].deleteFlag = true
@@ -112,8 +108,6 @@ class Board
     for action in actions
       actionsDict[action.coord.x + ',' + action.coord.y] = action
 
-    console.log actionsDict
-
     for column, x in @board
       for cell, y in column
         if cell? and (x + ',' + y) of actionsDict
@@ -123,12 +117,10 @@ class Board
         else if cell?
           newBoard[x][y] = cell
 
-    for column, x in @board
+    for column, x in newBoard
       for cell, y in column
         if cell?.deleteFlag
-          @board[x][y] = null
-
-    console.log newBoard
+          newBoard[x][y] = null
 
     @board = newBoard
 
@@ -138,7 +130,6 @@ class Board
     actions = []
     for player in @players
       await player.feed @, defer newActions
-      console.log 'DONE FEEDING', player.name
       actions = actions.concat newActions
 
     @runStep actions
@@ -148,9 +139,19 @@ class Board
 playerOne = new Player 'coffee playerOne.coffee', 'blue', 'PLAYER ONE'
 playerTwo = new Player 'coffee playerTwo.coffee', 'red', 'PLAYER TWO'
 
-board = new Board {width: 10, height: 10}, [playerOne, playerTwo]
+playerOne.process.stderr.pipe process.stderr
+playerTwo.process.stderr.pipe process.stderr
+
+board = new Board {width: 25, height: 25}, [playerOne, playerTwo]
+turn = 0
+
+speed = Number process.argv[2]
 
 (tick = ->
   board.step ->
+    #console.log JSON.stringify board.board, ((k, v) -> if k is 'process' then null else v), 2
+    process.stdout.write '\u001B[2J\u001B[0;0f'
+    console.log 'TICK', turn
     console.log board.render()
-    setTimeout tick, 1000)()
+    turn++
+    setTimeout tick, speed)()
