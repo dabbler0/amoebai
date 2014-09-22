@@ -1,5 +1,6 @@
 colors = require 'colors'
 child_process = require 'child_process'
+fs = require 'fs'
 
 PRIME_THRESHOLD = 5
 
@@ -22,7 +23,14 @@ dirMap = {
 
 class Player
   constructor: (@script, @color, @name) ->
-    @process = child_process.exec @script
+    @process = child_process.exec @script, {
+      maxBuffer: 1024 * 1024 * 16
+    }
+
+    @process.on 'exit', (code, string) =>
+      throw new Error "PLAYER '#{@name}' FORFEITS (exit code #{code}, signal #{string})"
+
+    @process.setMaxListeners 2
 
   feed: (board, cb) ->
     @process.stdin.write board.serialize() + '\n\n\n\n'
@@ -35,6 +43,7 @@ class Player
           cont str
         else
           @process.stdout.once 'data', fn
+
     response = response.split('\n')[...-2]
     actions = []
     for line in response
@@ -127,31 +136,41 @@ class Board
   serialize: -> JSON.stringify @board, (k, v) -> if k is 'process' then null else v
 
   step: (cb) ->
-    actions = []
+    actions = []; counts = (0 for i in @players)
     for player in @players
       await player.feed @, defer newActions
       actions = actions.concat newActions
 
     @runStep actions
 
-    cb()
+    for column, x in @board
+      for cell, y in column
+        for player, i in @players
+          counts[i]++ if cell?.player is player
+    cb counts
 
 playerOne = new Player 'coffee playerOne.coffee', 'blue', 'PLAYER ONE'
 playerTwo = new Player 'coffee playerTwo.coffee', 'red', 'PLAYER TWO'
 
-playerOne.process.stderr.pipe process.stderr
-playerTwo.process.stderr.pipe process.stderr
+playerOne.process.stderr.pipe fs.createWriteStream 'one.err'
+playerTwo.process.stderr.pipe fs.createWriteStream 'two.err'
 
-board = new Board {width: 25, height: 25}, [playerOne, playerTwo]
+board = new Board {width: 79, height: 25}, [playerOne, playerTwo]
 turn = 0
 
 speed = Number process.argv[2]
-
 (tick = ->
-  board.step ->
+  board.step (counts) ->
     #console.log JSON.stringify board.board, ((k, v) -> if k is 'process' then null else v), 2
     process.stdout.write '\u001B[2J\u001B[0;0f'
     console.log 'TICK', turn
     console.log board.render()
+    console.log 'BLUE', counts[0], 'RED', counts[1]
     turn++
+    if counts[0] is 0
+      console.log 'PLAYER TWO WON'
+      process.exit 0
+    if counts[1] is 0
+      console.log 'PLAYER ONE WON'
+      process.exit 0
     setTimeout tick, speed)()
